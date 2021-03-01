@@ -251,10 +251,29 @@ def main():
 
     imgs = cp.array([img1, img2, img3, img4])
 
+    aug = Augmenter()
+    pipe = Pipeline(batch_size=batch_size, num_threads=2, device_id=0, exec_async=False, exec_pipelined=False)
+    with pipe:
+        imgs, labels = fn.external_source(source=eii, num_outputs=2, device="gpu")
+        aug_imgs = fn.python_function(imgs, device='gpu', function=aug.augmenter, num_outputs=1)
+        pipe.set_outputs(aug_imgs, labels)
+        
+    pipe.build()
+
+    pipe_out = pipe.run()
+
+    out = pipe_out[0].as_cpu().as_array()
+    outRGB = np.copy(out)
+
+    img1 = outRGB[0]
+    img2 = outRGB[1]
+    img3 = outRGB[2]
+    img4 = outRGB[3]
+
     cv2.imwrite('img1.png', img1)
-    cv2.imwrite('img1.png', img2)
-    cv2.imwrite('img1.png', img3)
-    cv2.imwrite('img1.png', img4)
+    cv2.imwrite('img2.png', img2)
+    cv2.imwrite('img3.png', img3)
+    cv2.imwrite('img4.png', img4)
     print("Finished")
 
 if __name__ == "__main__":
