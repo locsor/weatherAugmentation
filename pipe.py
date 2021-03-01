@@ -1,5 +1,6 @@
 import cupy as cp
 import cv2
+import collections
 import numpy as np
 import random
 import math
@@ -64,14 +65,12 @@ class Augmenter:
         return cp.dot(rgb[..., :3], cp.array([0.1140, 0.5870, 0.2989]))
     
     def wibbledmean(self, array, wibble):
-            return array / 4 + wibble * cp.random.uniform(-wibble, wibble,
-                                                          array.shape)
+            return array / 4 + wibble * cp.random.uniform(-wibble, wibble, array.shape)
     def fillsquares(self, maparray, mapsize, stepsize, wibble):
         cornerref = maparray[0:mapsize:stepsize, 0:mapsize:stepsize]
         squareaccum = cornerref + cp.roll(cornerref, shift=-1, axis=0)
         squareaccum += cp.roll(squareaccum, shift=-1, axis=1)
-        maparray[stepsize // 2:mapsize:stepsize, stepsize // 2:mapsize:stepsize] = 
-                                                            self.wibbledmean(squareaccum, wibble)
+        maparray[stepsize // 2:mapsize:stepsize, stepsize // 2:mapsize:stepsize] = self.wibbledmean(squareaccum, wibble)
 
     def filldiamonds(self, maparray, stepsize, wibble):
         mapsize = maparray.shape[0]
@@ -133,6 +132,7 @@ class Augmenter:
             shifted = self.shift_cupy(x, dx, dy)
             blurred = blurred + kernel[i] * shifted
         return blurred
+    
     def fog_cupy(self, img, severity=1):
         shape = cp.array(img).shape
         max_side = max(shape)
@@ -241,6 +241,7 @@ class Augmenter:
             img = self.snow_cupy(img)
 
         return cp.array(img, dtype = np.uint8)
+
 class ExternalInputIterator(object):
     def __init__(self, batch_size, imgs):
         self.batch_size = batch_size
@@ -254,11 +255,12 @@ class ExternalInputIterator(object):
     def __next__(self):
         batch = []
         labels = []
+        choises = cp.random.randint(2, size=(4,3))
         for _ in range(self.batch_size):
             batch.append(self.imgs[self.i])
             labels.append(cp.array([0], dtype = np.uint8))
             self.i = (self.i + 1) % self.n
-        return (batch, labels)
+        return (batch, labels, choises)
 
 def main():
     image_dir = './images'
@@ -271,7 +273,6 @@ def main():
     imgs = cp.array([img1, img2, img3, img4])
 
     eii = ExternalInputIterator(batch_size, imgs)
-    print("Time elapsed:", end - start, "sec")
 
     aug = Augmenter()
     pipe = Pipeline(batch_size=batch_size, num_threads=2, device_id=0, exec_async=False, exec_pipelined=False)
@@ -292,11 +293,10 @@ def main():
     img3 = outRGB[2]
     img4 = outRGB[3]
 
-    cv2.imwrite('img1.png', img1)
-    cv2.imwrite('img2.png', img2)
-    cv2.imwrite('img3.png', img3)
-    cv2.imwrite('img4.png', img4)
-    print("Finished")
+    plt.imsave('img1.png', img1)
+    plt.imsave('img2.png', img2)
+    plt.imsave('img3.png', img3)
+    plt.imsave('img4.png', img4)
 
 if __name__ == "__main__":
     main()
