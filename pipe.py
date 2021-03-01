@@ -250,6 +250,7 @@ def main():
     img4 = cv2.resize(cv2.cvtColor(cv2.imread(image_dir + '/4.png'),cv2.COLOR_BGR2RGB), (512,512))
 
     imgs = cp.array([img1, img2, img3, img4])
+    eii = ExternalInputIterator(batch_size, imgs)
 
     aug = Augmenter()
     pipe = Pipeline(batch_size=batch_size, num_threads=2, device_id=0, exec_async=False, exec_pipelined=False)
