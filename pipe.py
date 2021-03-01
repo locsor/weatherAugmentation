@@ -241,6 +241,25 @@ class Augmenter:
 
         return cp.array(img, dtype = np.uint8)
 
+class ExternalInputIterator(object):
+    def __init__(self, batch_size, imgs):
+        self.batch_size = batch_size
+        self.imgs = imgs
+
+    def __iter__(self):
+        self.i = 0
+        self.n = self.imgs.shape[0]
+        return self
+
+    def __next__(self):
+        batch = []
+        labels = []
+        for _ in range(self.batch_size):
+            batch.append(self.imgs[self.i])
+            labels.append(cp.array([0], dtype = np.uint8))
+            self.i = (self.i + 1) % self.n
+        return (batch, labels)
+
 def main():
     image_dir = './images'
 
