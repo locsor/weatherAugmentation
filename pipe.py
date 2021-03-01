@@ -255,6 +255,7 @@ def main():
     cv2.imwrite('img1.png', img2)
     cv2.imwrite('img1.png', img3)
     cv2.imwrite('img1.png', img4)
+    print("Finished")
 
 if __name__ == "__main__":
     main()
