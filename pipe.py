@@ -6,9 +6,9 @@ import random
 import math
 import nvidia.dali.fn as fn
 import nvidia.dali.types as types
-from random import shuffle
+from random import shuffle, choice
 from nvidia.dali.pipeline import Pipeline
-from scipy.ndimage import zoom as scizoom
+from cupyimg.scipy.ndimage.interpolation import zoom as scizoom
 from cupyimg.skimage.transform import resize
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
@@ -16,18 +16,30 @@ import matplotlib.gridspec as gridspec
 batch_size = 4
 
 class Augmenter:
-    def __init__(self, snow_severity = 1, fog_severity = 1, frost_severity = 1):
-        self.snow_param = [(0.1, 0.3, 3, 0.5, 10, 4, 0.8),
-                         (0.2, 0.3, 2, 0.5, 12, 4, 0.7),
-                         (0.55, 0.3, 4, 0.9, 12, 8, 0.7),
-                         (0.55, 0.3, 4.5, 0.85, 12, 8, 0.65),
-                         (0.55, 0.3, 2.5, 0.85, 12, 12, 0.55)][snow_severity - 1]
+    def __init__(self, snow_severity = 1, fog_severity = 1, frost_severity = 1, rain_severity = 1, zoom_severity = 1):
+#         snow_severity = cp.random.randint(1, 4)
+#         fog_severity = cp.random.randint(1, 6)
+#         frost_severity = cp.random.randint(1, 6)
+#         rain_severity = cp.random.randint(1, 4)
+#         zoom_severity = cp.random.randint(1, 6)
+        
+        self.snow_param = [(0.01, 0.3, 6, 0.6, 10, 4, 0.8),
+             (0.05, 0.3, 6, 0.6, 10, 4, 0.8),
+             (0.12, 0.3, 6, 0.6, 10, 4, 0.8)][snow_severity - 1]
         self.fog_param = [(1.5, 2), (2., 2), (2.5, 1.7), (2.5, 1.5), (3., 1.4)][fog_severity - 1]
         self.frost_param = [(1, 0.4),
                             (0.8, 0.6),
                             (0.7, 0.7),
                             (0.65, 0.7),
                             (0.6, 0.75)][frost_severity - 1]
+        self.rain_param = [(-200,0.6, 10, 4, 0.8),
+                           (-100,0.6, 10, 4, 0.8),
+                           (-50,0.6, 10, 4, 0.8)][rain_severity - 1]
+        self.zoom_param = [np.arange(1, 1.11, 0.01),
+             np.arange(1, 1.16, 0.01),
+             np.arange(1, 1.21, 0.02),
+             np.arange(1, 1.26, 0.02),
+             np.arange(1, 1.31, 0.03)][zoom_severity - 1]
         
     def next_power_of_2(self, x):
         return 1 if x == 0 else 2 ** (x - 1).bit_length()
@@ -110,8 +122,7 @@ class Augmenter:
         # clipping along the height dimension:
         ch1 = int(cp.ceil(img.shape[1] / float(zoom_factor)))
         top1 = (img.shape[1] - ch1) // 2
-
-        img = cp.array(scizoom(cp.asnumpy(img[top0:top0 + ch0, top1:top1 + ch1]),
+        img = cp.array(scizoom(img[top0:top0 + ch0, top1:top1 + ch1],
                       (zoom_factor, zoom_factor, 1), order=1))
 
         return img
@@ -193,16 +204,10 @@ class Augmenter:
         return cp.clip(self.frost_param[0] * cp.array(x) + self.frost_param[1] * frost_rescaled, 0, 255)
 
     def snow_cupy(self, x, severity=1):
-        c = [(0.1, 0.3, 3, 0.5, 10, 4, 0.8),
-             (0.2, 0.3, 2, 0.5, 12, 4, 0.7),
-             (0.55, 0.3, 4, 0.9, 12, 8, 0.7),
-             (0.55, 0.3, 4.5, 0.85, 12, 8, 0.65),
-             (0.55, 0.3, 2.5, 0.85, 12, 12, 0.55)][severity - 1]
-
         x = cp.array(x, dtype=np.float32) / 255.
         snow_layer = cp.random.normal(size=x.shape[:2], loc=self.snow_param[0],
                                       scale=self.snow_param[1])
-
+    
         snow_layer = self.clipped_zoom_cupy(snow_layer[..., np.newaxis], self.snow_param[2])
         snow_layer[snow_layer < self.snow_param[3]] = 0
 
@@ -231,15 +236,66 @@ class Augmenter:
             x[:snow_layer.shape[0], :snow_layer.shape[1]] += snow_layer + np.rot90(
                 snow_layer, k=2)
             return cp.clip(x, 0, 1) * 255
-            
-    def augmenter(self, img, choises, seed=0):
-        if choises[0] == 1:
-            img = self.fog_cupy(img)
-        if choises[1] == 1:
-            img = self.frost_cupy(img)
-        if choises[2] == 1:
-            img = self.snow_cupy(img)
+        
+    def zoom_blur_cupy(self,x,severity=1):
+        x = (cp.array(x) / 255.).astype(np.float32)
+        out = cp.zeros_like(x)
 
+        set_exception = False
+        for zoom_factor in self.zoom_param:
+            if len(x.shape) < 3 or x.shape[2] < 3:
+                x_channels = cp.array([x, x, x]).transpose((1, 2, 0))
+                zoom_layer = self.clipped_zoom_cupy(x_channels, zoom_factor)
+                zoom_layer = zoom_layer[:x.shape[0], :x.shape[1], 0]
+            else:
+                zoom_layer = self.clipped_zoom_cupy(x, zoom_factor)
+                zoom_layer = zoom_layer[:x.shape[0], :x.shape[1], :]
+            try:
+                out += zoom_layer
+            except ValueError:
+                set_exception = True
+                out[:zoom_layer.shape[0], :zoom_layer.shape[1]] += zoom_layer
+        if set_exception:
+            print('ValueError for zoom blur, Exception handling')
+        x = (x + out) / (len(self.zoom_param) + 1)
+        return cp.clip(x, 0, 1) * 255
+    
+    def rain_cupy(self, x, severity=1):
+        x = cp.array(x, dtype=np.float32) / 255.
+        rain_layer = cp.random.uniform(self.rain_param[0],1,size=x.shape[:2])
+
+        rain_layer[rain_layer < self.rain_param[1]] = 0
+
+        rain_layer = cp.clip(rain_layer.squeeze(), 0, 1)
+           
+        rain_layer = self._motion_blur_cupy(rain_layer, radius=self.rain_param[2], sigma=self.rain_param[3], angle=np.random.uniform(-135, -45))
+
+        # The rain layer is rounded and cropped to the img dims
+        rain_layer = cp.round_(rain_layer * 255).astype(cp.uint8) / 255.
+        rain_layer = rain_layer[..., cp.newaxis]
+        rain_layer = rain_layer[:x.shape[0], :x.shape[1], :]
+
+        if len(x.shape) < 3 or x.shape[2] < 3:
+            x = self.rain_param[4] * x + (1 - self.rain_param[4]) * cp.maximum(x, x.reshape(x.shape[0],
+                                                        x.shape[1]) * 1.5 + 0.5)
+            rain_layer = rain_layer.squeeze(-1)
+        else:
+            x = self.rain_param[4] * x + (1 - self.rain_param[4]) * np.maximum(x, self.rgb2gray_cupy(x).reshape(
+                x.shape[0], x.shape[1], 1) * 1.5 + 0.5)
+
+        rain_presence = cp.zeros_like(x)
+        rain_presence[rain_layer[:,:,0] > 0] = 1
+
+        try:
+            return cp.clip(x - rain_presence, 0, 1)*255 + rain_presence*100
+        except ValueError:
+            print('ValueError for Rain, Exception handling')
+            x[:rain_layer.shape[0], :rain_layer.shape[1]] -= rain_layer
+            return cp.clip(x, 0, 1) * 255 + rain_presence*100
+            
+    def augmenter(self, img, seed=0):
+        effects = [self.fog_cupy, self.frost_cupy, self.snow_cupy, self.rain_cupy, self.zoom_blur_cupy]
+        img = choice(effects)(img)
         return cp.array(img, dtype = np.uint8)
 
 class ExternalInputIterator(object):
@@ -255,12 +311,11 @@ class ExternalInputIterator(object):
     def __next__(self):
         batch = []
         labels = []
-        choises = cp.random.randint(2, size=(4,3))
         for _ in range(self.batch_size):
             batch.append(self.imgs[self.i])
             labels.append(cp.array([0], dtype = np.uint8))
             self.i = (self.i + 1) % self.n
-        return (batch, labels, choises)
+        return (batch, labels)
 
 def main():
     image_dir = './images'
@@ -277,8 +332,8 @@ def main():
     aug = Augmenter()
     pipe = Pipeline(batch_size=batch_size, num_threads=2, device_id=0, exec_async=False, exec_pipelined=False)
     with pipe:
-        imgs, labels, choises = fn.external_source(source=eii, num_outputs=3, device="gpu")
-        aug_imgs = fn.python_function(imgs, choises, device='gpu', function=aug.augmenter, num_outputs=1)
+        imgs, labels = fn.external_source(source=eii, num_outputs=2, device="gpu")
+        aug_imgs = fn.python_function(imgs, device='gpu', function=aug.augmenter, num_outputs=1)
         pipe.set_outputs(aug_imgs, labels)
         
     pipe.build()
